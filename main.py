@@ -2,6 +2,7 @@ import os
 import hmac
 import hashlib
 import json
+import threading
 from flask import Flask, request, jsonify
 import anthropic
 
@@ -13,6 +14,9 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 SYSTEM_PROMPT = os.environ.get("SYSTEM_PROMPT", "You are Darwin, a helpful research assistant.")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+processed_events = set()
+lock = threading.Lock()
 
 def verify_slack_signature(request):
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
@@ -26,6 +30,31 @@ def verify_slack_signature(request):
     ).hexdigest()
     return hmac.compare_digest(computed, signature)
 
+def send_slack_message(channel, text):
+    import urllib.request
+    payload = json.dumps({"channel": channel, "text": text}).encode()
+    req = urllib.request.Request(
+        "https://slack.com/api/chat.postMessage",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+            "Content-Type": "application/json"
+        }
+    )
+    urllib.request.urlopen(req)
+
+def handle_event(event, event_id):
+    user_message = event.get("text", "")
+    channel = event.get("channel")
+
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1000,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_message}]
+    )
+    send_slack_message(channel, response.content[0].text)
+
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
     data = request.json
@@ -37,34 +66,16 @@ def slack_events():
         return jsonify({"error": "Invalid signature"}), 403
 
     event = data.get("event", {})
+    event_id = data.get("event_id", "")
+
+    with lock:
+        if event_id in processed_events:
+            return jsonify({"status": "duplicate"}), 200
+        processed_events.add(event_id)
 
     if event.get("type") == "app_mention" and not event.get("bot_id"):
-        user_message = event.get("text", "")
-        channel = event.get("channel")
-
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1000,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}]
-        )
-
-        reply = response.content[0].text
-
-        import urllib.request
-        payload = json.dumps({
-            "channel": channel,
-            "text": reply
-        }).encode()
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage",
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
-                "Content-Type": "application/json"
-            }
-        )
-        urllib.request.urlopen(req)
+        thread = threading.Thread(target=handle_event, args=(event, event_id))
+        thread.start()
 
     return jsonify({"status": "ok"})
 
