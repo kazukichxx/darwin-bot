@@ -63,22 +63,23 @@ def slack_events():
         return jsonify({"challenge": data["challenge"]})
 
     if not verify_slack_signature(request):
+        print("ERROR: Invalid signature - check SLACK_SIGNING_SECRET")
         return jsonify({"error": "Invalid signature"}), 403
 
     event = data.get("event", {})
     event_id = data.get("event_id", "")
 
+    print(f"Received event: {event.get('type')}, bot_id: {event.get('bot_id')}")
+
     with lock:
         if event_id in processed_events:
+            print(f"Duplicate event: {event_id}")
             return jsonify({"status": "duplicate"}), 200
         processed_events.add(event_id)
 
     if event.get("type") == "app_mention" and not event.get("bot_id"):
+        print(f"Processing mention in channel: {event.get('channel')}")
         thread = threading.Thread(target=handle_event, args=(event, event_id))
         thread.start()
 
     return jsonify({"status": "ok"})
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 3000))
-    app.run(host="0.0.0.0", port=port)
