@@ -144,10 +144,9 @@ def add_to_notion_gap_db(title, rq="", limitation="", approach="", priority="高
 
 
 def extract_and_register_notion(user_message, reply, db_type):
-    """Claude APIを使ってJSON抽出しNotionに登録する"""
     if db_type == "paper":
         system = '与えられたテキストから論文情報を抽出し、JSONのみ返してください。形式: {"title":"","summary":"","score":5,"author":"","url":"","year":null,"tags":[],"insight":""}'
-    else:  # gap
+    else:
         system = '与えられたテキストからリサーチギャップ情報を抽出し、JSONのみ返してください。有効タグ:["プロセスマイニング","デジタルツイン","因果推論","ベイジアンネットワーク","医療","製造業","XAI"]。形式: {"title":"ギャップタイトル","rq":"リサーチクエスチョン","limitation":"既存研究の限界","approach":"提案アプローチ","priority":"高","tags":[]}'
 
     extract_response = client.messages.create(
@@ -235,20 +234,18 @@ def handle_event(event, event_id):
 
         reply = "\n".join(reply_parts) if reply_parts else "処理しました"
 
-        # Notion登録処理
         should_register = NOTION_API_KEY and "登録" in user_message and len(reply) > 50
 
-if should_register:
-    # ギャップDB登録を優先（ダーウィン向け）
-    if NOTION_GAP_DB_ID and any(kw in SYSTEM_PROMPT for kw in ["ストラテジスト", "Darwin", "ダーウィン"]):
-        success = extract_and_register_notion(user_message, reply, "gap")
-        if success:
-            reply += "\n\n✅ Notionのリサーチギャップに登録しました"
-    # 論文DB登録（Alexandria向け）
-    elif NOTION_PAPER_DB_ID and any(kw in user_message for kw in ["論文", "paper"]):
-        success = extract_and_register_notion(user_message, reply, "paper")
-        if success:
-            reply += "\n\n✅ Notionの論文・知識DBに登録しました"
+        if should_register:
+            is_darwin = any(kw in SYSTEM_PROMPT for kw in ["ストラテジスト", "Darwin", "ダーウィン"])
+            if is_darwin and NOTION_GAP_DB_ID:
+                success = extract_and_register_notion(user_message, reply, "gap")
+                if success:
+                    reply += "\n\n✅ Notionのリサーチギャップに登録しました"
+            elif NOTION_PAPER_DB_ID and any(kw in user_message for kw in ["論文", "paper"]):
+                success = extract_and_register_notion(user_message, reply, "paper")
+                if success:
+                    reply += "\n\n✅ Notionの論文・知識DBに登録しました"
 
         send_slack_message(channel, reply)
 
