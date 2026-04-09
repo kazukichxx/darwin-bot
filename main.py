@@ -52,20 +52,26 @@ def send_slack_message(channel, text):
 def add_to_notion_paper_db(title, summary, score=5):
     if not NOTION_API_KEY or not NOTION_PAPER_DB_ID:
         return
+    
+    # DB IDからハイフンを除去して正規化
+    db_id = NOTION_PAPER_DB_ID.replace("-", "")
+    # ハイフン付きフォーマットに変換
+    db_id_formatted = f"{db_id[0:8]}-{db_id[8:12]}-{db_id[12:16]}-{db_id[16:20]}-{db_id[20:]}"
+    
     payload = json.dumps({
-        "parent": {"database_id": NOTION_PAPER_DB_ID},
+        "parent": {"database_id": db_id_formatted},
         "properties": {
             "タイトル": {
                 "title": [{"text": {"content": title}}]
             },
             "3行要約": {
-                "rich_text": [{"text": {"content": summary}}]
+                "rich_text": [{"text": {"content": summary[:2000]}}]
             },
             "重要度スコア": {
                 "number": score
             },
             "ステータス": {
-                "select": {"name": "要約済"}
+                "status": {"name": "未読"}
             }
         }
     }).encode()
@@ -80,7 +86,11 @@ def add_to_notion_paper_db(title, summary, score=5):
     )
     try:
         with urllib.request.urlopen(req) as response:
-            print(f"Notion page created successfully")
+            result = json.loads(response.read().decode())
+            print(f"Notion page created: {result.get('id')}")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"Notion HTTP error: {e.code} - {body}")
     except Exception as e:
         print(f"Notion error: {e}")
         
